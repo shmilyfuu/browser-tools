@@ -35,7 +35,10 @@ browser-tools/
 │       ├── content.js
 │       ├── sidepanel.html
 │       ├── sidepanel.css
-│       ├── sidepanel.js
+│       ├── sidepanel-core.js
+│       ├── sidepanel-ui.js
+│       ├── sidepanel-files.js
+│       ├── sidepanel-init.js
 │       └── icons/
 └── docs/
     └── repository-layout.md
