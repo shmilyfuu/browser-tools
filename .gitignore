@@ -1,0 +1,43 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Node / package managers
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+.yarn/cache/
+.yarn/unplugged/
+
+# Build / coverage / caches
+dist/
+build/
+out/
+coverage/
+.cache/
+.tmp/
+tmp/
+*.log
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Browser extension packaging
+*.crx
+*.pem
+web-ext-artifacts/
+
+# Userscript temporary exports
+*.user.min.js.map
