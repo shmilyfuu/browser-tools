@@ -193,12 +193,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "CAPTURE_VISIBLE_PREVIEW") {
     (async () => {
       try {
-        const tabId = Number(message.tabId);
-        if (!Number.isInteger(tabId)) throw new Error("缺少标签页信息");
-        const tab = await chrome.tabs.get(tabId);
-        if (!tab?.active) throw new Error("原网页当前不在活动标签页");
+        let tab = null;
+        const requestedTabId = Number.isInteger(message.tabId) ? message.tabId : null;
+        if (requestedTabId !== null) {
+          try {
+            tab = await chrome.tabs.get(requestedTabId);
+          } catch {
+            tab = null;
+          }
+        }
+        if (!tab?.active) {
+          const activeTabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+          tab = activeTabs[0] || null;
+        }
+        if (!tab?.active || !Number.isInteger(tab.id)) {
+          throw new Error("找不到用于生成预览的活动标签页");
+        }
         const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
-        sendResponse({ ok: true, dataUrl });
+        sendResponse({ ok: true, dataUrl, tabId: tab.id });
       } catch (error) {
         sendResponse({ ok: false, error: error?.message || String(error) });
       }

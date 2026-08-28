@@ -2,12 +2,12 @@
 
 用于统一管理浏览器相关工具的代码仓库。仓库会持续收纳 Chrome / Edge / Chromium 扩展、Tampermonkey / Violentmonkey Userscript，以及其他适合独立维护的轻量级浏览器工具。
 
-各子项目保持相对独立，可以单独开发、测试、构建、发布和维护。只有出现真实的跨项目复用需求时，才把公共代码整理到 `shared/`。
+各子项目保持相对独立，可以单独开发、测试、构建、发布和维护。出现真实的跨项目复用需求后，再把公共代码整理到 `shared/`。
 
 ## 目录说明
 
-- `extensions/`：Chrome、Edge 与其他 Chromium 浏览器扩展。一款扩展一个目录。
-- `userscripts/`：Tampermonkey、Violentmonkey 等 Userscript。一款脚本一个目录；首次加入 Userscript 时创建该目录。
+- `extensions/`：Chrome、Edge 与其他 Chromium 浏览器扩展，一款扩展一个目录。
+- `userscripts/`：Tampermonkey、Violentmonkey 等 Userscript，一款脚本一个目录；首次加入 Userscript 时创建该目录。
 - `shared/`：跨项目公共代码。当前没有共享模块，因此暂未创建实体目录。
 - `docs/`：仓库级文档、目录约定和后续迁移说明。
 
@@ -37,6 +37,7 @@ browser-tools/
 │       ├── sidepanel.css
 │       ├── sidepanel-core.js
 │       ├── sidepanel-ui.js
+│       ├── sidepanel-preview.js
 │       ├── sidepanel-files.js
 │       ├── sidepanel-init.js
 │       └── icons/

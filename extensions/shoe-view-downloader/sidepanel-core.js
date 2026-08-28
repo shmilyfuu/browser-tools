@@ -46,7 +46,9 @@ function todayString() {
 }
 
 function normalizeQueue(value) {
-  const result = Array.isArray(value) ? value.slice(0, QUEUE_SIZE) : [];
+  const result = Array.isArray(value)
+    ? value.slice(0, QUEUE_SIZE).map((item) => item ? normalizeMeta(item) : null)
+    : [];
   while (result.length < QUEUE_SIZE) result.push(null);
   return result;
 }
@@ -94,10 +96,12 @@ function normalizeMeta(meta) {
   const currentUrl = meta.currentUrl || meta.url || meta.bestUrl || "";
   const bestUrl = meta.bestUrl || currentUrl;
   if (!currentUrl && !bestUrl) return null;
+  const rawPreviewUrl = typeof meta.previewUrl === "string" ? meta.previewUrl : "";
+  const previewUrl = /^data:image\//i.test(rawPreviewUrl) ? rawPreviewUrl : "";
   return {
     currentUrl,
     bestUrl,
-    previewUrl: meta.previewUrl || "",
+    previewUrl,
     candidates: Array.isArray(meta.candidates) ? meta.candidates.slice(0, 24) : [],
     width: Number(meta.width) || 0,
     height: Number(meta.height) || 0,
@@ -171,6 +175,20 @@ async function imageBitmapToPreview(bitmap) {
   return canvas.toDataURL("image/webp", 0.82);
 }
 
+async function fileToPreview(file) {
+  if (!file || !file.type?.startsWith("image/") || !file.size) return "";
+  let bitmap = null;
+  try {
+    bitmap = await createImageBitmap(file);
+    if (!bitmap.width || !bitmap.height) return "";
+    return await imageBitmapToPreview(bitmap);
+  } catch {
+    return "";
+  } finally {
+    bitmap?.close?.();
+  }
+}
+
 async function fileToMeta(file) {
   if (!file || !file.type?.startsWith("image/") || !file.size) return null;
 
@@ -237,7 +255,7 @@ function metaFromHtml(html, fallbackUri = "") {
   return normalizeMeta({
     currentUrl,
     bestUrl: candidates[0]?.url || currentUrl,
-    previewUrl: currentUrl,
+    previewUrl: "",
     candidates,
     alt: img.getAttribute("alt") || "",
     source: "drop-html"
@@ -247,10 +265,23 @@ function metaFromHtml(html, fallbackUri = "") {
 async function extractDropMeta(dataTransfer) {
   if (!dataTransfer) return null;
 
+  // Copy the File reference while the drop event is active. Windows Chrome
+  // often exposes a webpage image here; we only use it as a local preview
+  // source when URL metadata is available, never as the preferred final URL.
+  const imageFile = Array.from(dataTransfer.files || [])
+    .find((file) => file.type?.startsWith("image/") && file.size > 0) || null;
+
+  async function attachLocalFilePreview(meta) {
+    if (!meta || /^data:image\//i.test(meta.previewUrl || "") || !imageFile) return meta;
+    const previewUrl = await fileToPreview(imageFile);
+    return previewUrl ? normalizeMeta({ ...meta, previewUrl }) : meta;
+  }
+
   try {
     const custom = dataTransfer.getData(CUSTOM_MIME);
     if (custom) {
-      const parsed = normalizeMeta(JSON.parse(custom));
+      let parsed = normalizeMeta(JSON.parse(custom));
+      parsed = await attachLocalFilePreview(parsed);
       return mergeWithLastDrag(parsed);
     }
   } catch {
@@ -261,30 +292,34 @@ async function extractDropMeta(dataTransfer) {
     .split(/\r?\n/)
     .find((line) => line && !line.startsWith("#")) || "";
   const html = dataTransfer.getData("text/html") || "";
-  const fromHtml = metaFromHtml(html, uri);
-  if (fromHtml) return mergeWithLastDrag(fromHtml);
+  let fromHtml = metaFromHtml(html, uri);
+  if (fromHtml) {
+    fromHtml.previewUrl = "";
+    fromHtml = await attachLocalFilePreview(fromHtml);
+    return mergeWithLastDrag(fromHtml);
+  }
 
   const directUrl = safeUrl(uri);
   if (directUrl) {
-    return mergeWithLastDrag(normalizeMeta({
+    let directMeta = normalizeMeta({
       currentUrl: directUrl,
       bestUrl: directUrl,
-      previewUrl: directUrl,
+      previewUrl: "",
       source: "drop-uri"
-    }));
+    });
+    directMeta = await attachLocalFilePreview(directMeta);
+    return mergeWithLastDrag(directMeta);
   }
 
-  // Windows Chrome can expose a dragged webpage image as a temporary File.
-  // Use this path only after URL/HTML formats fail, and reject empty/undecodable files.
-  const imageFile = Array.from(dataTransfer.files || [])
-    .find((file) => file.type?.startsWith("image/") && file.size > 0);
+  // Only use a temporary File as the whole item when no usable URL metadata
+  // exists. Empty and undecodable virtual files were filtered above.
   if (imageFile) return fileToMeta(imageFile);
 
   return mergeWithLastDrag(null);
 }
 
 async function cropCapturedPreview(meta) {
-  if (!meta?.isTopFrame || !Number.isInteger(meta.tabId)) return "";
+  if (!meta?.isTopFrame) return "";
   const rect = meta.previewRect;
   const viewport = meta.viewport;
   if (!rect?.width || !rect?.height || !viewport?.width || !viewport?.height) return "";
@@ -292,7 +327,7 @@ async function cropCapturedPreview(meta) {
   try {
     const response = await chrome.runtime.sendMessage({
       type: "CAPTURE_VISIBLE_PREVIEW",
-      tabId: meta.tabId
+      tabId: Number.isInteger(meta.tabId) ? meta.tabId : null
     });
     if (!response?.ok || !response.dataUrl) return "";
 
@@ -340,9 +375,9 @@ async function ensurePreview(meta) {
     return normalized;
   }
 
-  // Last fallback: use the already displayed URL. This may perform a request on
-  // sites where the browser cannot share the page cache with the extension page.
-  normalized.previewUrl = normalized.currentUrl || normalized.bestUrl;
+  // Do not fall back to a remote URL here. A preview is optional; assigning
+  // currentUrl/bestUrl to <img> would download the image again while dragging.
+  normalized.previewUrl = "";
   return normalized;
 }
 

@@ -19,6 +19,26 @@
   ];
   const SRCSET_ATTRS = ["srcset", "data-srcset", "data-lazy-srcset"];
 
+  function extensionContextAvailable() {
+    try {
+      return Boolean(chrome?.runtime?.id);
+    } catch {
+      return false;
+    }
+  }
+
+  function safeSendMessage(message) {
+    if (!extensionContextAvailable()) return;
+    try {
+      const pending = chrome.runtime.sendMessage(message);
+      if (pending && typeof pending.catch === "function") pending.catch(() => {});
+    } catch {
+      // Reloading/updating an unpacked extension invalidates content-script
+      // contexts that were injected before the reload. Ignore the stale page
+      // listener; a normal page refresh receives the new content script.
+    }
+  }
+
   function absoluteUrl(value) {
     if (!value) return "";
     const text = String(value).trim().replace(/^['"]|['"]$/g, "");
@@ -217,14 +237,16 @@
       // Native page drag data remains available as a fallback.
     }
 
-    chrome.runtime.sendMessage({ type: "RECORD_DRAG", meta }).catch(() => {});
+    safeSendMessage({ type: "RECORD_DRAG", meta });
   }, true);
 
   document.addEventListener("contextmenu", (event) => {
     const meta = collectMeta(event.target, createDragId());
     if (!meta) return;
-    chrome.runtime.sendMessage({ type: "RECORD_CONTEXT", meta }).catch(() => {});
+    safeSendMessage({ type: "RECORD_CONTEXT", meta });
   }, true);
+
+  if (!extensionContextAvailable()) return;
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type !== "RESOLVE_BLOB") return undefined;

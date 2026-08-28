@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "鞋图四视图下载器",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "将网页鞋图拖入四格队列，复用页面已渲染内容快速预览，按鞋款、角度、序号和日期自动命名并保存高清原图。",
   "minimum_chrome_version": "114",
   "permissions": [
