@@ -119,6 +119,7 @@ async function init() {
     if (area === "local" && changes[QUEUE_KEY]) {
       queue = normalizeQueue(changes[QUEUE_KEY].newValue);
       renderAll();
+      hydrateQueuePreviews().catch(() => {});
     }
     if (area === "session" && changes[NOTICE_KEY]?.newValue) {
       const notice = changes[NOTICE_KEY].newValue;
@@ -132,6 +133,7 @@ async function init() {
   }
 
   renderAll();
+  hydrateQueuePreviews().catch(() => {});
 }
 
 init().catch((error) => {
