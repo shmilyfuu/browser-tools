@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>鞋图四视图下载器</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div>
+        <h1>鞋图下载器</h1>
+        <p>四视图快速命名与下载</p>
+      </div>
+      <div class="queue-count" id="queueCount">0 / 4</div>
+    </header>
+
+    <section class="card form-card">
+      <label class="field-label" for="shoeCode">鞋款 xxx</label>
+      <input id="shoeCode" class="text-input" type="text" autocomplete="off" placeholder="例如 D3119CM6">
+
+      <div class="field-row">
+        <label class="field-label" for="angleTag">角度 y</label>
+        <button class="text-button" id="manageTagsBtn" type="button">管理标签</button>
+      </div>
+      <input id="angleTag" class="text-input" type="text" autocomplete="off" placeholder="例如 外侧">
+      <div class="tag-list" id="tagList" aria-label="常用标签"></div>
+
+      <div class="tag-manager is-hidden" id="tagManager">
+        <div class="tag-manager-row">
+          <input id="newTagInput" class="text-input compact" type="text" autocomplete="off" placeholder="新增常用标签">
+          <button id="addTagBtn" class="secondary-button" type="button">添加</button>
+        </div>
+        <p class="helper-text">管理模式下，点击标签右侧 × 可删除。</p>
+      </div>
+
+      <div class="field-row date-row">
+        <div class="date-field">
+          <label class="field-label" for="dateStamp">日期</label>
+          <input id="dateStamp" class="text-input" type="text" inputmode="numeric" maxlength="8" placeholder="20260812">
+        </div>
+        <button id="todayBtn" class="secondary-button align-bottom" type="button">今天</button>
+      </div>
+    </section>
+
+    <section class="card save-card">
+      <div class="save-card-header">
+        <div>
+          <span class="field-label save-label">保存位置</span>
+          <div class="directory-name" id="directoryName">尚未选择文件夹</div>
+          <p class="helper-text directory-status" id="directoryStatus">选择一次后，扩展会记住这个文件夹。</p>
+        </div>
+        <button id="chooseDirectoryBtn" class="secondary-button" type="button">选择文件夹</button>
+      </div>
+    </section>
+
+    <section class="drop-section">
+      <div class="master-drop-zone" id="masterDropZone" tabindex="0">
+        <div class="drop-icon">↓</div>
+        <strong>把网页图片拖到这里</strong>
+        <span id="nextSlotHint">自动放入位置 1</span>
+      </div>
+
+      <div class="slot-toolbar">
+        <span>图片队列</span>
+        <button class="text-button" id="clearQueueBtn" type="button">清空图片</button>
+      </div>
+
+      <div class="slot-grid" id="slotGrid">
+        <article class="image-slot" data-index="0" tabindex="0"></article>
+        <article class="image-slot" data-index="1" tabindex="0"></article>
+        <article class="image-slot" data-index="2" tabindex="0"></article>
+        <article class="image-slot" data-index="3" tabindex="0"></article>
+      </div>
+      <p class="helper-text slot-help">也可以直接拖到指定格子；格子之间可拖动交换顺序。网页图片右键菜单里也能加入队列。</p>
+    </section>
+
+    <section class="card preview-card">
+      <div class="field-row">
+        <span class="field-label">文件名预览</span>
+        <span class="preview-note" id="previewNote">等待填写</span>
+      </div>
+      <div class="filename-preview" id="filenamePreview"></div>
+    </section>
+
+    <details class="card settings-card">
+      <summary>下载设置</summary>
+      <div class="settings-body">
+        <label class="check-row">
+          <input id="preferOriginal" type="checkbox">
+          <span>优先使用高分辨率候选图</span>
+        </label>
+        <label class="check-row">
+          <input id="addDate" type="checkbox">
+          <span>文件名加入日期</span>
+        </label>
+        <label class="check-row">
+          <input id="clearImagesAfter" type="checkbox">
+          <span>下载成功后清空图片</span>
+        </label>
+        <label class="check-row">
+          <input id="clearAngleAfter" type="checkbox">
+          <span>下载成功后清空角度 y</span>
+        </label>
+        <label class="check-row">
+          <input id="clearShoeAfter" type="checkbox">
+          <span>下载成功后清空鞋款 xxx</span>
+        </label>
+
+      </div>
+    </details>
+
+    <div class="action-bar">
+      <button id="downloadBtn" class="primary-button" type="button" disabled>下载图片</button>
+    </div>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="sidepanel.js"></script>
+</body>
+</html>
