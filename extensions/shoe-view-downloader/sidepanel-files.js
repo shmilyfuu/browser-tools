@@ -135,6 +135,31 @@ async function uniqueFilename(dirHandle, filename) {
   throw new Error(`文件名冲突过多：${filename}`);
 }
 
+
+function loadedResourceToBlob(result) {
+  if (!result?.found || typeof result.content !== "string") return null;
+  const mime = result.mimeType || "application/octet-stream";
+  if (result.base64Encoded) return base64ToBlob(result.content, mime);
+  return new Blob([result.content], { type: mime });
+}
+
+async function tryLoadedImageBlob(entry) {
+  if (!entry?.url || !/^https?:/i.test(entry.url)) return null;
+  try {
+    const result = await chrome.runtime.sendMessage({
+      type: "READ_LOADED_RESOURCE",
+      tabId: Number.isInteger(entry.tabId) ? entry.tabId : null,
+      url: entry.url
+    });
+    if (!result?.ok || !result.found) return null;
+    const blob = loadedResourceToBlob(result);
+    const imageLike = result.resourceType === "Image" || String(blob?.type || result.mimeType || "").startsWith("image/");
+    return blob?.size && imageLike ? blob : null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchImageBlob(url) {
   const response = await fetch(url, {
     method: "GET",
@@ -151,7 +176,7 @@ async function fetchImageBlob(url) {
 async function savePreparedItem(entry) {
   if (!entry?.ok) return entry;
   try {
-    const blob = await fetchImageBlob(entry.url);
+    const blob = await tryLoadedImageBlob(entry) || await fetchImageBlob(entry.url);
     const ext = extensionFromBlob(blob, entry.extGuess);
     const desiredName = `${entry.baseName}.${ext}`;
     const filename = await uniqueFilename(directoryHandle, desiredName);
