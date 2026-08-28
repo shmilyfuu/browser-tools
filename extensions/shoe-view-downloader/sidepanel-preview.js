@@ -1,4 +1,4 @@
-// v1.2.1: preview rendering must stay local. Remote image URLs are retained only
+// v1.2.2: preview rendering must stay local. Remote image URLs are retained only
 // for the final save operation and are never assigned to a side-panel <img>.
 function renderSlots() {
   const slots = Array.from(document.querySelectorAll(".image-slot"));
