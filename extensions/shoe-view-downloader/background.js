@@ -2,6 +2,9 @@ const QUEUE_KEY = "shoeQueue";
 const NOTICE_KEY = "uiNotice";
 const QUEUE_SIZE = 4;
 const LAST_DRAG_TTL_MS = 3000;
+const MAX_CDP_RESOURCE_BYTES = 16 * 1024 * 1024;
+
+let debuggerReadChain = Promise.resolve();
 
 const lastDragByTab = new Map();
 const lastContextByTab = new Map();
@@ -59,9 +62,10 @@ async function setNotice(message, type = "info") {
 
 async function configureSidePanel() {
   try {
+    await chrome.sidePanel.setOptions({ path: "sidepanel.html", enabled: true });
     await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
   } catch (error) {
-    console.warn("Unable to configure side panel behavior", error);
+    console.warn("Unable to configure global side panel", error);
   }
 }
 
@@ -105,7 +109,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
   const tabId = tab?.id;
   const captured = Number.isInteger(tabId) ? lastContextByTab.get(tabId) : null;
-  const fallback = info.srcUrl ? { currentUrl: info.srcUrl, bestUrl: info.srcUrl, previewUrl: info.srcUrl } : null;
+  const fallback = info.srcUrl ? { currentUrl: info.srcUrl, bestUrl: info.srcUrl, previewUrl: "" } : null;
   const item = normalizeMeta(captured || fallback, tabId, 0);
 
   if (!item) {
@@ -132,11 +136,11 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     await setNotice(`图片已放入位置 ${index + 1}。`, "success");
   }
 
-  if (Number.isInteger(tabId)) {
+  if (Number.isInteger(tab?.windowId)) {
     try {
-      await chrome.sidePanel.open({ tabId });
+      await chrome.sidePanel.open({ windowId: tab.windowId });
     } catch (error) {
-      console.debug("Side panel could not be opened from context menu", error);
+      console.debug("Side panel could not be opened for this window", error);
     }
   }
 });
@@ -145,6 +149,159 @@ async function clearDragState() {
   lastDragByTab.clear();
   lastDragGlobal = null;
   await chrome.storage.session.remove("lastDragGlobal");
+}
+
+
+function normalizeComparableUrl(url) {
+  try {
+    const parsed = new URL(url);
+    parsed.hash = "";
+    return parsed.href;
+  } catch {
+    return String(url || "").split("#")[0];
+  }
+}
+
+function urlsMatch(a, b) {
+  return Boolean(a && b && normalizeComparableUrl(a) === normalizeComparableUrl(b));
+}
+
+function collectPageResources(tree, list = []) {
+  if (!tree) return list;
+  const frame = tree.frame || {};
+  for (const resource of tree.resources || []) {
+    list.push({
+      frameId: frame.id,
+      frameUrl: frame.url || "",
+      url: resource.url || "",
+      type: resource.type || "",
+      mimeType: resource.mimeType || "",
+      contentSize: Number(resource.contentSize) || 0,
+      failed: resource.failed === true,
+      canceled: resource.canceled === true
+    });
+  }
+  for (const child of tree.childFrames || []) collectPageResources(child, list);
+  return list;
+}
+
+function estimateDecodedBytes(content, base64Encoded) {
+  if (typeof content !== "string") return 0;
+  if (!base64Encoded) return new TextEncoder().encode(content).byteLength;
+  const clean = content.replace(/\s+/g, "");
+  if (!clean) return 0;
+  const padding = clean.endsWith("==") ? 2 : clean.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor(clean.length * 3 / 4) - padding);
+}
+
+async function resolveSourceTabId(requestedTabId = null) {
+  if (Number.isInteger(requestedTabId)) {
+    try {
+      const tab = await chrome.tabs.get(requestedTabId);
+      if (tab && Number.isInteger(tab.id)) return tab.id;
+    } catch {
+      // Fall through to the active tab. This is useful when native drag data
+      // survives but the custom content-script metadata did not cross into the side panel.
+    }
+  }
+  const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  return Number.isInteger(tabs[0]?.id) ? tabs[0].id : null;
+}
+
+async function readLoadedResourceNow(request) {
+  const tabId = await resolveSourceTabId(Number.isInteger(request?.tabId) ? request.tabId : null);
+  const url = String(request?.url || "");
+  if (!Number.isInteger(tabId) || !url) {
+    return { ok: false, found: false, error: "缺少标签页或图片 URL。" };
+  }
+
+  const debuggee = { tabId };
+  let attached = false;
+  try {
+    await chrome.debugger.attach(debuggee, "1.3");
+    attached = true;
+    await chrome.debugger.sendCommand(debuggee, "Page.enable");
+    const treeResult = await chrome.debugger.sendCommand(debuggee, "Page.getResourceTree");
+    const resources = collectPageResources(treeResult?.frameTree)
+      .filter((resource) => !resource.failed && !resource.canceled);
+    const match = resources.find((resource) => urlsMatch(resource.url, url));
+    if (!match) {
+      return {
+        ok: true,
+        found: false,
+        tabId,
+        resourceCount: resources.length
+      };
+    }
+
+    if (match.contentSize > MAX_CDP_RESOURCE_BYTES) {
+      return {
+        ok: true,
+        found: false,
+        tabId,
+        tooLarge: true,
+        reportedContentSize: match.contentSize,
+        matchedUrl: match.url
+      };
+    }
+
+    const contentResult = await chrome.debugger.sendCommand(debuggee, "Page.getResourceContent", {
+      frameId: match.frameId,
+      url: match.url
+    });
+    const content = typeof contentResult?.content === "string" ? contentResult.content : "";
+    const base64Encoded = contentResult?.base64Encoded === true;
+    const decodedBytes = estimateDecodedBytes(content, base64Encoded);
+    if (!content || !decodedBytes) {
+      return { ok: true, found: false, tabId, matchedUrl: match.url };
+    }
+    if (decodedBytes > MAX_CDP_RESOURCE_BYTES) {
+      return {
+        ok: true,
+        found: false,
+        tabId,
+        tooLarge: true,
+        decodedBytes,
+        matchedUrl: match.url
+      };
+    }
+
+    return {
+      ok: true,
+      found: true,
+      tabId,
+      matchedUrl: match.url,
+      frameId: match.frameId,
+      resourceType: match.type,
+      mimeType: match.mimeType || "application/octet-stream",
+      reportedContentSize: match.contentSize,
+      decodedBytes,
+      base64Encoded,
+      content
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      found: false,
+      tabId,
+      error: error?.message || String(error)
+    };
+  } finally {
+    if (attached) {
+      try {
+        await chrome.debugger.detach(debuggee);
+      } catch {
+        // The tab may have closed or another debugger may have detached it.
+      }
+    }
+  }
+}
+
+function readLoadedResourceQueued(request) {
+  const run = () => readLoadedResourceNow(request);
+  const pending = debuggerReadChain.then(run, run);
+  debuggerReadChain = pending.then(() => undefined, () => undefined);
+  return pending;
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -187,6 +344,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     clearDragState()
       .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
+  }
+
+  if (message.type === "READ_LOADED_RESOURCE") {
+    readLoadedResourceQueued({ tabId: message.tabId, url: message.url })
+      .then((result) => sendResponse(result))
+      .catch((error) => sendResponse({ ok: false, found: false, error: error?.message || String(error) }));
     return true;
   }
 
@@ -318,7 +482,8 @@ async function prepareBatch(payload) {
         url,
         baseName: baseParts.join("-"),
         extGuess,
-        mime: item.mime || ""
+        mime: item.mime || "",
+        tabId: Number.isInteger(item.tabId) ? item.tabId : null
       };
     } catch (error) {
       return { index, ok: false, error: error?.message || String(error) };
