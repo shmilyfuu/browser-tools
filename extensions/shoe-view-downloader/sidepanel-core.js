@@ -318,6 +318,57 @@ async function extractDropMeta(dataTransfer) {
   return mergeWithLastDrag(null);
 }
 
+
+function base64ToBlob(base64, mimeType = "application/octet-stream") {
+  const clean = String(base64 || "").replace(/\s+/g, "");
+  if (!clean) return new Blob([], { type: mimeType });
+  const binary = atob(clean);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return new Blob([bytes], { type: mimeType });
+}
+
+function loadedResourceResultToBlob(result) {
+  if (!result?.found || typeof result.content !== "string") return null;
+  const mime = result.mimeType || "application/octet-stream";
+  if (result.base64Encoded) return base64ToBlob(result.content, mime);
+  return new Blob([result.content], { type: mime });
+}
+
+async function previewFromLoadedResource(meta) {
+  const targetUrl = meta?.currentUrl || "";
+  if (!targetUrl || !/^https?:/i.test(targetUrl)) return null;
+  try {
+    const result = await chrome.runtime.sendMessage({
+      type: "READ_LOADED_RESOURCE",
+      tabId: Number.isInteger(meta.tabId) ? meta.tabId : null,
+      url: targetUrl
+    });
+    if (!result?.ok || !result.found) return null;
+    const blob = loadedResourceResultToBlob(result);
+    const imageLike = result.resourceType === "Image" || String(blob?.type || result.mimeType || "").startsWith("image/");
+    if (!blob?.size || !imageLike) return null;
+    const bitmap = await createImageBitmap(blob);
+    try {
+      if (!bitmap.width || !bitmap.height) return null;
+      const previewUrl = await imageBitmapToPreview(bitmap);
+      if (!previewUrl) return null;
+      return {
+        previewUrl,
+        width: bitmap.width,
+        height: bitmap.height,
+        mime: blob.type || result.mimeType || meta.mime || "",
+        tabId: Number.isInteger(result.tabId) ? result.tabId : meta.tabId,
+        previewSource: "cdp-resource"
+      };
+    } finally {
+      bitmap.close?.();
+    }
+  } catch {
+    return null;
+  }
+}
+
 async function cropCapturedPreview(meta) {
   if (!meta?.isTopFrame) return "";
   const rect = meta.previewRect;
@@ -369,15 +420,46 @@ async function ensurePreview(meta) {
   if (!normalized) return null;
   if (/^data:image\//i.test(normalized.previewUrl)) return normalized;
 
+  const loaded = await previewFromLoadedResource(normalized);
+  if (loaded?.previewUrl) {
+    return normalizeMeta({ ...normalized, ...loaded });
+  }
+
   const captured = await cropCapturedPreview(normalized);
   if (captured) {
     normalized.previewUrl = captured;
     return normalized;
   }
 
-  // Do not fall back to a remote URL here. A preview is optional; assigning
-  // currentUrl/bestUrl to <img> would download the image again while dragging.
+  // Never assign currentUrl/bestUrl to a side-panel <img>; doing so can
+  // download the same remote image again merely for the queue preview.
   normalized.previewUrl = "";
   return normalized;
+}
+
+let queueHydrationPromise = null;
+
+function hydrateQueuePreviews() {
+  if (queueHydrationPromise) return queueHydrationPromise;
+  queueHydrationPromise = (async () => {
+    let changed = false;
+    for (let index = 0; index < queue.length; index += 1) {
+      const original = queue[index];
+      if (!original || /^data:image\//i.test(original.previewUrl || "")) continue;
+      const originalUrl = original.currentUrl || original.bestUrl || "";
+      const hydrated = await ensurePreview(original);
+      if (!hydrated?.previewUrl) continue;
+      const current = queue[index];
+      if (!current || (current.currentUrl || current.bestUrl || "") !== originalUrl) continue;
+      queue[index] = hydrated;
+      changed = true;
+      renderAll();
+    }
+    if (changed) await persistQueue();
+    return changed;
+  })().finally(() => {
+    queueHydrationPromise = null;
+  });
+  return queueHydrationPromise;
 }
 
